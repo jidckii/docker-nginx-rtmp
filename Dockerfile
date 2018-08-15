@@ -1,19 +1,18 @@
-FROM alpine:3.4
-LABEL author Alfred Gutierrez <alf.g.jr@gmail.com>
+FROM alpine:3.8 as scratch
 
-ENV NGINX_VERSION 1.13.9
-ENV NGINX_RTMP_VERSION 1.2.1
-ENV FFMPEG_VERSION 3.4.2
+FROM scratch as build
+LABEL author Eugene Medvedev <jidckii@gmail.com>
 
-EXPOSE 1935
-EXPOSE 80
+ARG MAKEFLAGS="-j4"
+ENV NGINX_VERSION=1.13.9        \
+    NGINX_RTMP_VERSION=1.2.1    \
+    FFMPEG_VERSION=4.0.2
 
-RUN mkdir -p /opt/data && mkdir /www
-
+# Install dependencies.
+RUN apk add --update \
+  tzdata \
 # Build dependencies.
-RUN	apk update && apk add	\
   binutils \
-  binutils-libs \
   build-base \
   ca-certificates \
   gcc \
@@ -27,7 +26,25 @@ RUN	apk update && apk add	\
   pcre-dev \
   pkgconf \
   pkgconfig \
-  zlib-dev
+  zlib-dev \
+# FFmpeg dependencies.
+  nasm \
+  yasm-dev \
+  lame-dev \
+  libogg-dev \
+  x264-dev \
+  libvpx-dev \
+  libvorbis-dev \
+  x265-dev \
+  freetype-dev \
+  libass-dev \
+  libwebp-dev \
+  rtmpdump-dev \
+  libtheora-dev \
+  opus-dev \
+  # from edge/testing
+  && echo http://dl-cdn.alpinelinux.org/alpine/edge/testing >> /etc/apk/repositories \
+  && apk add --update fdk-aac-dev 
 
 # Get nginx source.
 RUN cd /tmp && \
@@ -49,21 +66,19 @@ RUN cd /tmp/nginx-${NGINX_VERSION} && \
   --error-log-path=/opt/nginx/logs/error.log \
   --http-log-path=/opt/nginx/logs/access.log \
   --with-debug && \
-  cd /tmp/nginx-${NGINX_VERSION} && make && make install
-
-# FFmpeg dependencies.
-RUN apk add --update nasm yasm-dev lame-dev libogg-dev x264-dev libvpx-dev libvorbis-dev x265-dev freetype-dev libass-dev libwebp-dev rtmpdump-dev libtheora-dev opus-dev
-RUN echo http://dl-cdn.alpinelinux.org/alpine/edge/testing >> /etc/apk/repositories
-RUN apk add --update fdk-aac-dev
+  cd /tmp/nginx-${NGINX_VERSION} \
+  # Compile nginx
+  && make "${MAKEFLAGS}" \
+  && make install
 
 # Get FFmpeg source.
 RUN cd /tmp/ && \
   wget http://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.gz && \
-  tar zxf ffmpeg-${FFMPEG_VERSION}.tar.gz && rm ffmpeg-${FFMPEG_VERSION}.tar.gz
-
+  tar zxf ffmpeg-${FFMPEG_VERSION}.tar.gz && rm ffmpeg-${FFMPEG_VERSION}.tar.gz \
 # Compile ffmpeg.
-RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
-  ./configure \
+  && cd /tmp/ffmpeg-${FFMPEG_VERSION} \
+  && ./configure \
+  --disable-ffplay \
   --enable-version3 \
   --enable-gpl \
   --enable-nonfree \
@@ -83,11 +98,18 @@ RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
   --enable-avresample \
   --enable-libfreetype \
   --enable-openssl \
-  --disable-debug && \
-  make && make install && make distclean
+  --disable-debug \
+  && make "${MAKEFLAGS}" \
+  && make install \
+  && make distclean
 
 # Cleanup.
 RUN rm -rf /var/cache/* /tmp/*
+
+EXPOSE 1935
+EXPOSE 80
+
+RUN mkdir -p /opt/data && mkdir /www
 
 # Add NGINX config and static files.
 ADD nginx.conf /opt/nginx/nginx.conf
